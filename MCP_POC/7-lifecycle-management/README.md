@@ -1,48 +1,126 @@
-# MCP Crash Course for Python Developers
+# Lifecycle Management in MCP
 
-The Model Context Protocol (MCP) is a powerful framework that enables developers to build AI applications with large language models (LLMs) by providing a standardized way to connect models with external data sources and tools. This crash course will guide you through the fundamentals of MCP, from understanding its core concepts to implementing servers and clients that leverage prompts, resources, and tools.
+Lifecycle management is a crucial aspect of the Model Context Protocol (MCP) that helps you control the initialization, operation, and termination of MCP servers and clients. Understanding lifecycle management is essential for building robust MCP applications.
 
-## Table of Contents
+## What is Lifecycle Management?
 
-1. [Introduction and Context](./1-introduction-and-context/README.md)
-2. [Understanding MCP](./2-understanding-mcp/README.md)
-3. [Simple Server Setup with Python SDK](./3-simple-server-setup/README.md)
-4. [OpenAI Integration](./4-openai-integration/README.md)
-5. [MCP vs Function Calling](./5-mcp-vs-function-calling/README.md)
-6. [Running with Docker](./6-run-with-docker/README.md)
-7. [Lifecycle Management](./7-lifecycle-management/README.md)
+Lifecycle management in MCP refers to the process of properly initializing, maintaining, and terminating connections between MCP clients and servers. It ensures that resources are properly allocated and released, and that communication channels are established and closed correctly.
 
-## Setting Up Your Development Environment
+## Key Components of Lifecycle Management
 
-Let's start by setting up our environment. The MCP Python SDK provides everything we need to build both servers and clients.
+### 1. Initialization
 
-```bash
-# Using uv (recommended)
-uv pip install -r requirements.txt
+Initialization is the first step in the MCP lifecycle:
 
-# Or using pip
-pip install -r requirements.txt
+- **Client Initialization**: The client establishes a connection to the server and negotiates protocol versions
+- **Server Initialization**: The server validates the client's request and prepares to handle tool calls
+- **Version Negotiation**: Both parties agree on a compatible protocol version to use for the session
+
+```python
+# Client initialization example
+async with stdio_client(server_params) as (read, write):
+    async with ClientSession(read, write) as session:
+        # Initialize the connection
+        await session.initialize()
 ```
 
-The MCP CLI tools provide helpful utilities for development and testing:
+### 2. Operation
 
-```bash
-# Test a server with the MCP Inspector
-mcp dev server.py
+During the operation phase:
 
-# Install a server in Claude Desktop
-mcp install server.py
+- **Tool Registration**: The server exposes its tools to the client
+- **Tool Discovery**: The client discovers available tools from the server
+- **Tool Execution**: The client calls tools and the server executes them
+- **Resource Management**: The server manages resources needed for tool execution
 
-# Run a server directly
-mcp run server.py
+```python
+# Tool discovery example
+tools_result = await session.list_tools()
+print("Available tools:")
+for tool in tools_result.tools:
+    print(f"  - {tool.name}: {tool.description}")
+
+# Tool execution example
+result = await session.call_tool(
+    tool_call.function.name,
+    arguments=json.loads(tool_call.function.arguments),
+)
 ```
 
-## Resources and Next Steps
+### 3. Termination
 
-Key resources for deepening your MCP knowledge:
+Termination ensures proper cleanup:
 
-- [Model Context Protocol documentation](https://modelcontextprotocol.io)
-- [Model Context Protocol specification](https://spec.modelcontextprotocol.io)
-- [Python SDK GitHub repository](https://github.com/modelcontextprotocol/python-sdk)
-- [Officially supported servers](https://github.com/modelcontextprotocol/servers)
-- [MCP Core Architecture](https://modelcontextprotocol.io/docs/concepts/architecture)
+- **Resource Cleanup**: All resources allocated during the session are released
+- **Connection Closure**: Communication channels are properly closed
+- **State Reset**: Server state is reset for the next session
+
+```python
+# Termination happens automatically when exiting the context manager
+async with ClientSession(read, write) as session:
+    # Session operations
+    # ...
+# Session is automatically terminated here
+```
+
+## Advanced Lifecycle Management with the Lifespan Object
+
+For more complex applications, MCP provides a feature called the **lifespan object** that helps manage application-level resources throughout the entire lifecycle of an MCP server.
+
+### What is the Lifespan Object?
+
+The lifespan object is an asynchronous context manager that:
+
+1. Initializes resources when the server starts
+2. Makes those resources available to all tools during the server's operation
+3. Properly cleans up resources when the server shuts down
+
+### How to Use the Lifespan Object
+
+```python
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+
+from mcp.server.fastmcp import Context, FastMCP
+
+# Define a type-safe context class
+@dataclass
+class AppContext:
+    db: Database  # Replace with your actual resource type
+
+# Create the lifespan context manager
+@asynccontextmanager
+async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+    # Initialize resources on startup
+    db = await Database.connect()
+    try:
+        # Make resources available during operation
+        yield AppContext(db=db)
+    finally:
+        # Clean up resources on shutdown
+        await db.disconnect()
+
+# Create the MCP server with the lifespan
+mcp = FastMCP("My App", lifespan=app_lifespan)
+
+# Use the lifespan context in tools
+@mcp.tool()
+def query_db(ctx: Context) -> str:
+    """Tool that uses initialized resources"""
+    db = ctx.request_context.lifespan_context.db
+    return db.query()
+```
+
+### Benefits of Using the Lifespan Object
+
+1. **Type Safety**: The lifespan context is strongly typed, providing better IDE support and error checking
+2. **Resource Management**: Ensures resources are properly initialized and cleaned up
+3. **Dependency Injection**: Provides a clean way to inject dependencies into tools
+4. **Separation of Concerns**: Separates resource management from tool implementation
+
+## Conclusion
+
+By understanding and implementing the initialization, operation, and termination phases correctly, and leveraging the lifespan object for application-level resources, you can create more reliable, efficient, and secure MCP integrations.
+
+For more detailed information on lifecycle management, refer to the [MCP Lifecycle](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle#lifecycle).
