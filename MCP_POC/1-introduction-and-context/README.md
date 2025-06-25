@@ -1,4 +1,4 @@
-# MCP Crash Course for Python Developers
+# MCP POC on Python
 
 ## Part 1: Introduction & Context
 
